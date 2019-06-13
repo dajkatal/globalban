@@ -10,7 +10,7 @@ This cog also makes sure that a user meant to be banned, stays banned, until unb
 ```python
 1. cd .../Red-DiscordBot/cogs/CogManager/cogs/ # Go to the directory that has Redbot installed.
 
-2. git install git://test.com
+2. git install https://github.com/dajkatal/globalban.git
 
 3. Start Redbot
 
