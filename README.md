@@ -22,9 +22,9 @@ This cog also makes sure that a user meant to be banned, stays banned, until unb
 ## Commands
 
 ```python
-- [p]globalban <name> or <name+discrim> or <mention> or <id> # Bans a user from all connected servers.
+- [p]globalban <name> or <name+discrim> or <mention> or <ID> # Bans a user from all connected servers.
 
-- [p]globalunban <id> # Unbans a user from all connected servers.
+- [p]globalunban <ID> # Unbans a user from all connected servers.
 
 - [p]globalbans # Gives all the people who are banned.
 
@@ -45,13 +45,13 @@ pip install Red-DiscordBot
 ```
 
 ## Difficulties
-```diff
-- Missing some of the possible edge cases.
-- Finding the most optimal way of storing the data collected.
+```
++ Missing some of the possible edge cases.
++ Finding the most optimal way of storing the data collected.
 ```
 
 ## What I learnt
-```diff
+```
 + How to work with discord.py rewrite and redbot.
 + How to find the possible edge cases given a situation.
 + How to optimize and reformat code to make it faster and more efficient.
