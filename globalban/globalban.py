@@ -32,6 +32,8 @@ class BanSync(commands.Cog):
         self.bot = bot
         self.config = Config.get_conf(self, identifier=1001)
         self.initiate = self.bot.loop.create_task(self.initiate())
+        self.to_time = 0
+        self.scheduled = 'weekly'
         self.task = self.bot.loop.create_task(self.bansync_scheduled())
 
     async def initiate(self):
@@ -53,14 +55,15 @@ class BanSync(commands.Cog):
             synced_servers = {
                 'synced_servers': [i.id for i in self.bot.guilds]
             }
-            print(synced_servers['synced_servers'])
             self.config.register_global(**synced_servers)
         if await self.config.scheduled() is None:
             scheduled = {
                 'scheduled': ['weekly']
             }
-            print(scheduled['scheduled'])
             self.config.register_global(**scheduled)
+        else:
+            self.scheduled = await self.config.scheduled()
+            self.scheduled = self.scheduled[0]
 
     async def bansync_scheduled(self):
         """
@@ -72,27 +75,28 @@ class BanSync(commands.Cog):
         """
         while True:
             await self.bansync_root()
-            scheduled = await self.config.scheduled()[0]
             time = datetime.now()
             month, day, day_num, hour, minutes, seconds = int(time.strftime('%m')), time.strftime('%a'), int(time.strftime('%d')), int(time.strftime('%H')), int(time.strftime('%M')), int(time.strftime('%S'))
             days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
-            month_days = ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12']
             month_length = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
 
-            if scheduled is 'weekly':
-                to_time = (24 - hour) * 60 * 60
-                print('Time to sleep:', to_time)
-                await asyncio.sleep(to_time)
-            if scheduled is 'daily':
-                to_time = (24 - hour) * 60 * 60
-                to_time += (7-(days.index(day) + 1)) * 24 * 60 * 60
-                print('Time to sleep:', to_time)
-                await asyncio.sleep(to_time)
-            if scheduled is 'monthly':
-                to_time = (24 - hour) * 60 * 60
-                to_time += (month_length[month_days.index(month)] - day_num) * 24 * 60 * 60
-                print('Time to sleep:', to_time)
-                await asyncio.sleep(to_time)
+            if self.scheduled == 'daily':
+                self.to_time = ((60 - minutes) * 60) + (60 - seconds)
+                self.to_time += (24 - hour - 1) * 60 * 60
+                await self.bot.get_channel(self.sync_send_message).send('Done. The bans will now sync {}. Time to sleep: {}'.format(self.scheduled, self.to_time))
+                await asyncio.sleep(self.to_time)
+            elif self.scheduled == 'weekly':
+                self.to_time = ((60 - minutes) * 60) + (60 - seconds)
+                self.to_time += (24 - hour - 1) * 60 * 60
+                self.to_time += (7-(days.index(day) + 1)) * 24 * 60 * 60
+                await self.bot.get_channel(self.sync_send_message).send('Done. The bans will now sync {}. Time to sleep: {}'.format(self.scheduled, self.to_time))
+                await asyncio.sleep(self.to_time)
+            elif self.scheduled == 'monthly':
+                self.to_time = ((60-minutes) * 60) + (60-seconds)
+                self.to_time += (24 - hour - 1) * 60 * 60
+                self.to_time += (month_length[int(month)-1] - day_num) * 24 * 60 * 60
+                await self.bot.get_channel(self.sync_send_message).send('Done. The bans will now sync {}. Time to sleep: {}'.format(self.scheduled, self.to_time))
+                await asyncio.sleep(self.to_time)
 
     @has_permissions(ban_members=True)
     @commands.command()
@@ -107,19 +111,19 @@ class BanSync(commands.Cog):
         """
         try:
             schedule_at = schedule_at.lower()
-            if schedule_at is 'daily' or 'weekly' or 'monthly':
+            if schedule_at in ('daily', 'weekly', 'monthly'):
                 async with self.config.scheduled() as scheduled:
                     scheduled[0] = schedule_at
+                    self.scheduled = schedule_at
                     self.task.cancel()
+                    self.sync_send_message = ctx.channel.id
                     self.task = self.bot.loop.create_task(self.bansync_scheduled())
-                    await ctx.send('Done. The bans will now sync {}.'.format(schedule_at))
             else:
                 await ctx.send('Oops, please use daily, weekly or monthly.')
         except AttributeError:
             await ctx.send('Oops, please use daily, weekly or monthly.')
-        #except Exception as ex:
-        #    print(ex)
-        #    await ctx.send('Something went wrong, but im not sure what. Please check how to use the command.')
+        except Exception as ex:
+            await ctx.send('Something went wrong, but im not sure what. Please check how to use the command.')
 
     async def report_failure(self, failed_servers):
         """
@@ -217,7 +221,8 @@ class BanSync(commands.Cog):
                         except discord.errors.Forbidden:
                             failed_servers.append(server.name)
                     async with self.config.global_bans() as global_bans:
-                        global_bans.update({member.id: member.name})
+                        if len(failed_servers) is 0:
+                            global_bans.update({member.id: member.name})
                     if successful is len(servers):
                         await ctx.send('%s has been banned from all connected servers.' % member.name)
                     elif successful > 0 and successful < len(servers):
@@ -267,8 +272,9 @@ class BanSync(commands.Cog):
                             await ctx.send('%s has been unbanned from some of the connected servers.' % banned_users[id])
                         else:
                             await ctx.send('We have not been able to unban %s from the connected servers.' % banned_users[id])
-                        del(banned_users[id])
-                        return True
+                        if len(failed_servers) is 0:
+                            del(banned_users[id])
+                            return True
                 if len(failed_servers) > 0:
                     await self.report_failure(failed_servers)
                 if banned_users[id] is None:
