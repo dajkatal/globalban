@@ -35,6 +35,7 @@ class BanSync(commands.Cog):
         self.to_time = 0
         self.scheduled = 'weekly'
         self.task = self.bot.loop.create_task(self.bansync_scheduled())
+        self.tempbans = self.bot.loop.create_task(self.checktempbans())
 
     async def initiate(self):
         """
@@ -67,8 +68,7 @@ class BanSync(commands.Cog):
 
     async def bansync_scheduled(self):
         """
-        An looped task the runs once a week at a time that is dependant on when it is started.
-        (ex. If the bot starts at 8:00, it will synchronize bans in one week at 8:00)
+        An looped task the runs once every
 
         Input: Nothing
         Output: A server sync for all the global bans once a week.
@@ -177,6 +177,29 @@ class BanSync(commands.Cog):
         await self.bansync_root()
         await ctx.send('Done. If there is any error, the owner has been notified.')
 
+    async def checktempbans(self):
+        async with self.config.global_bans() as banned_users:
+            async with self.config.synced_servers() as servers:
+                while True:
+                    for id, member in banned_users.items():
+                        if member[2] < time.mktime(datetime.now().timetuple()):
+                            for server in servers:
+                                server = self.bot.get_guild(server)
+                                if server is None:
+                                    del servers[servers.index(server)]
+                                    continue
+                                try:
+                                    print(banned_users)
+                                    await server.unban(discord.Object(id=int(id)))
+                                    del (banned_users[id])
+                                    print('{} has been unbanned.'.format(member[0]))
+                                except:
+                                    pass
+                    await asyncio.sleep(60)
+
+
+
+
     @commands.command()
     async def globalbans(self, ctx):
         """
@@ -188,20 +211,89 @@ class BanSync(commands.Cog):
         message = 'Here are the globally banned users:\n'
         async with self.config.global_bans() as banned_users:
             for number, user in enumerate(banned_users.values()):
-                message += '\n{}. {}'.format(number + 1, user)
+                message += '\n{}. {} - Reason: {} - Time: {}'.format(number + 1, user[0], user[1], user[3])
             if len(banned_users.keys()) == 0:
                 message += '\nNone'
             await ctx.send(message)
 
     @has_permissions(ban_members=True)
     @commands.command()
-    async def globalban(self, ctx, *, member: discord.Member):
-        """
+    async def globalban(self, ctx, member: discord.Member, reason, time_of_ban):
+        """"
         Bans a user from all connected servers.
-
-        Usage: [p]globalban <name> or <name#discrim> or <mention> or <id>
+        
+        If you dont want to add a reason or time_of_ban, simple use /. This will give not reason and/pr ban the user forever.
+        Usage: [p]globalban <name> or <name#discrim> or <mention> or <id> <reason> <time of ban>
         """
         try:
+            if reason is '/':
+                reason = 'Not Given'
+            rawbantime = time_of_ban
+            if rawbantime is not '/':
+                keycodes = {'Y': 365, 'M': 30, 'W': 7, 'D': 1, 'H': 1, 'M': 1, 'S': 1}
+
+                total = {'D': 0, 'H': 0, 'M': 0, 'S': 0}
+
+                process_errors = []
+
+                processed_string = rawbantime.split('-')
+
+                for i in processed_string:
+                    number = int(''.join(list(filter(lambda x: x.isdigit(), i))))
+                    keycode = (''.join(list(filter(lambda x: x.isalpha(), i)))).upper()
+
+                    try:
+                        number = number * keycodes[keycode]
+                        if keycode in ['Y', 'MM', 'W']:
+                            keycode = 'D'
+                        total[keycode] += number
+                    except KeyError:
+                        process_errors.append(keycode)
+                    except:
+                        ctx.send('Something went wrong, but im not sure what. Please check how to use the command.')
+
+                if len(process_errors) is not 0:
+                    error_string = ''
+                    for error in process_errors:
+                        if process_errors[-1] is error and len(process_errors) is not 1:
+                            error_string += ' and ' + error
+                        else:
+                            if len(error_string) is 0:
+                                error_string += error
+                            else:
+                                error_string += ', ' + error
+
+                    print("I don't have these keycode(s): {}. Please check how to use the command.".format(error_string))
+                    return True
+
+                bantime_string = ''
+
+                for timestamp, value in total.items():
+                    if value is not 0:
+                        last_value = timestamp
+
+                for rawtimestamp, amount in total.items():
+                    if rawtimestamp is 'D':
+                        timestamp = 'days' if amount > 1 else 'day'
+                    if rawtimestamp is 'H':
+                        timestamp = 'hours' if amount > 1 else 'hour'
+                    if rawtimestamp is 'M':
+                        timestamp = 'minutes' if amount > 1 else 'minute'
+                    if rawtimestamp is 'S':
+                        timestamp = 'seconds' if amount > 1 else 'second'
+                    if amount > 0:
+                        if len(bantime_string) is 0:
+                            bantime_string += '{} {}'.format(amount, timestamp)
+                        elif rawtimestamp == last_value:
+                            bantime_string += ' and {} {}'.format(amount, timestamp)
+                        else:
+                            bantime_string += ', {} {}'.format(amount, timestamp)
+
+                bantime = time.mktime(datetime.now().timetuple()) + timedelta(days=total['D'], hours=total['H'], minutes=total['M'], seconds=total['S']).total_seconds()
+            else:
+                bantime = timedelta(days=100).total_seconds() * 1000000
+                bantime_string = 'Forever'
+
             if member is not 0:
                 async with self.config.synced_servers() as servers:
                     failed_servers = []
@@ -214,15 +306,18 @@ class BanSync(commands.Cog):
                         try:
                             bans = [b.user for b in await server.bans()]
                             if member not in bans:
+                                await member.send('You have been banned from all {} servers for {} because of the reason: {}.'.format('Gaming For Life', bantime_string, reason))
                                 await server.ban(member, delete_message_days=0)
                                 successful += 1
+                                print('before')
+                                print('after')
                             else:
                                 pass
                         except discord.errors.Forbidden:
                             failed_servers.append(server.name)
                     async with self.config.global_bans() as global_bans:
                         if len(failed_servers) is 0:
-                            global_bans.update({member.id: member.name})
+                            global_bans.update({member.id: [member.name, reason, bantime, bantime_string]})
                     if successful is len(servers):
                         await ctx.send('%s has been banned from all connected servers.' % member.name)
                     elif successful > 0 and successful < len(servers):
@@ -239,8 +334,8 @@ class BanSync(commands.Cog):
                 await ctx.send('Please enter a username. \nThis command is used like this: --globalban <username>.')
         except discord.errors.Forbidden:
             await ctx.send('Looks like you cannot do that.')
-        except:
-            await ctx.send('Something went wrong, but im not sure what. Please check how to use the command.')
+        #except:
+        #    await ctx.send('Something went wrong, but im not sure what. Please check how to use the command.')
 
     @has_permissions(ban_members=True)
     @commands.command()
@@ -267,11 +362,11 @@ class BanSync(commands.Cog):
                             except discord.errors.Forbidden:
                                 failed_servers.append(server.name)
                         if successful is len(servers):
-                            await ctx.send('%s has been unbanned from all connected servers.' % banned_users[id])
+                            await ctx.send('%s has been unbanned from all connected servers.' % banned_users[id][0])
                         elif successful > 0 and successful < servers:
-                            await ctx.send('%s has been unbanned from some of the connected servers.' % banned_users[id])
+                            await ctx.send('%s has been unbanned from some of the connected servers.' % banned_users[id][0])
                         else:
-                            await ctx.send('We have not been able to unban %s from the connected servers.' % banned_users[id])
+                            await ctx.send('We have not been able to unban %s from the connected servers.' % banned_users[id][0])
                         if len(failed_servers) is 0:
                             del(banned_users[id])
                             return True
